@@ -6,6 +6,7 @@ import { emitSocketEvent } from "../../socket/index.js";
 import { ApiError } from "../../utils/ApiError.js";
 import {  ApiResponse } from "../../utils/ApiResponse.js";
 import { asyncHandler } from "../../utils/AsyncHandler.js";
+import { getStaticFilePath, getLocalPath } from "../../utils/helpers.js";
 
 
 const chatMessageCommonAggregation = () => {
@@ -94,5 +95,85 @@ const sendMessage = asyncHandler(async(req, res) => {
     // take the chat id and content 
     // check if the content is not attached or empty
     // check if there the chat exists of not by id
-    //  
+    
+    const {chatId } = req.params
+
+    const {content} = req.body;
+
+    if(!content && !req.files?.attachments?.length) {
+        throw new ApiError(400, "Content or attachment is required");
+    }
+
+    const selectedChat = await Chat.findById(chatId);
+
+    if(!selectedChat) {
+        throw new ApiError(404, "Chat not found");
+    }
+
+    const messageFiles = [];
+
+    if(req.files && req.files.attachments?.length > 0) {
+        req.files.attachments?.map((attachment) => {
+            messageFiles.push({
+                url: getStaticFilePath(req, attachment.filename),
+                localPath: getLocalPath(req, attachment.filename)
+            })
+        })
+    }
+
+
+    const message = await Message.create({
+        sender: new Mongoose.Types.ObjectId(req.user._id),
+        content: content || "",
+        chat: new Mongoose.Types.ObjectId(chatId),
+        attachments: messageFiles,
+    })
+
+
+    // update the chat last message to show the last message
+
+    const chat = await chat.findByIdAndUpdate(
+        chatId,
+        {
+            $set: {
+                lastMessage: message._id
+            },
+        },
+
+        {new : true}
+    );
+
+    const messages = await Message.aggregate([
+        {
+            $match: {
+                _id: new Mongoose.Types.ObjectId(message._id),
+            },
+        },
+        ...chatMessageCommonAggregation(),
+    ]);
+
+    const recievedMessage = messages[0];
+
+    if(!recievedMessage) {
+        throw new ApiError(500, "Something went wrong");
+    }
+
+    chat.participants.forEach((participantObjectId) => {
+
+        if(participantObjectId.toString() === req.user._id.toString()) return;
+
+        emitSocketEvent(
+            req,
+            participantObjectId.toString(),
+            ChatEventEnum.MESSAGE_RECEIVED_EVENT,
+            recievedMessage
+        )
+    })
+
+    return res
+    .status(201)
+    .json(new ApiResponse(201, recievedMessage, "Message saved successfully"))
+
 });
+
+export { getAllMessage, sendMessage};
