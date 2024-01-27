@@ -172,11 +172,142 @@ const createOrGetaOneOnOneChat = asyncHandler(async (req, res) => {
             .json(new ApiResponse(200, chat[0], "Chat retrieved successfully"));
     }
 
-    
+    const newChat = await Chat.create({
+        isGroupChat: false,
+        participants: [req.user._id, new Mongoose.Types.ObjectId(recievedId)],
+        admin: req.user._id
+    });
 
+    const createdChat = await Chat.aggregate([
+        {
+            $match: {
+                _id: newChat._id,
+            },
+        },
+
+        ...chatCommonAggregation()
+    ])
+
+    const payload = newChat[0];
+
+    if(!payload) {
+        throw new ApiError(500, "Something went wrong");
+    }
+
+    payload?.participants?.forEach((participant) => {
+
+        if(participant._id.toString() === req.user._id.toString()) return;
+
+        emitSocketEvent(
+            req,
+            participant._id,
+            ChatEventEnum.NEW_CHAT_EVENT,
+            payload
+        )
+    })
+
+
+    return res
+    .status(200)
+    .json(new ApiResponse(200, payload, "Chat Retrieved successfully"))
+
+});
+
+
+const getGroupChatDetails = asyncHandler(async (req,res) => {
+
+    const {chatId} = req.params;
+
+    const groupChatDetails = await Chat.aggregate([
+        {
+            $match: {
+                _id: new Mongoose.Types.ObjectId(chatId),
+                isGroupChat: true
+            },
+        },
+        ...chatCommonAggregation(),
+    ])
+
+    const chat = groupChatDetails[0];
+
+    if(!chat) {
+        throw new ApiError(404, "Chat not found");
+    }
+
+    return res
+    .status(200)
+    .json(new ApiResponse(200, chat, "Group chat fetched successfully"))
+});
+
+const renameGroupChat = asyncHandler(async (req,res) => {
+
+    const { chatId} = req.params;
+    const { name} = req.body;
+
+    const groupChat = await Chat.find({
+        _id: new Mongoose.Types.ObjectId(chatId),
+        isGroupChat: true,
+    });
+
+    if(!groupChat) {
+        throw new ApiError(404, "Group Chat not found");
+    }
+
+    if(groupChat.admin.toString() !== req.user._id.toString()) {
+        throw new ApiError(403, "You are not allowed to rename this group chat, You are not Admin");
+    }
+
+    const updateGroupChat = await Chat.findByIdAndUpdate(
+        chatId,
+        {
+            $set: {
+                name,
+            }
+        },
+
+        {new: true}
+    );
+
+    const chat = await Chat.aggregate([
+        {
+            $match: {
+                _id: updateGroupChat._id,
+            },
+        },
+        ...chatCommonAggregation(),
+    ]);
+
+    const payload = chat[0];
+
+    if(!payload) {
+        throw new ApiError(500, "Something went wrong");
+    
+    }
+
+    payload?.participants?.forEach((participant) => {
+        emitSocketEvent(
+            req,
+            participant._id?.toString(),
+            ChatEventEnum.UPDATE_GROUP_NAME_EVENT,
+            payload
+        )
+    })
+
+    return res
+    .status(200)
+    .json(200, payload, "Group name updated successfully")
 
 })
 
+
+
+
+
 export {
+
+    createOrGetaOneOnOneChat,
+    getGroupChatDetails,
+    renameGroupChat,
+
 
 }
