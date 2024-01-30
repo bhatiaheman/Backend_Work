@@ -497,6 +497,138 @@ const leaveGroupChat = asyncHandler(async (req,res) => {
     .json(new ApiResponse(200, payload, "Group chat left successfully"));
 });
 
+const addNewParticipants = asyncHandler(async (req,res) => {
+
+    const { chatId, participantId } = req.params;
+
+    const groupChat = await Chat.findOne({
+        _id: new Mongoose.Types.ObjectId(chatId),
+        isGroupChat: true,
+    });
+
+    if(!groupChat) {
+        throw new ApiError(404, "Group chat not found");
+    }
+
+    if(groupChat?.admin?.toString() !== req.user._id.toString()) {
+        throw new ApiError(403, "You are not allowed to add participants, You are not Admin");
+    }
+
+    const existingParticipants = groupChat.participants;
+
+    if(existingParticipants.includes(participantId)) {
+        throw new ApiError(400, "Participant already exists");
+    }
+
+    const updatedChat = await Chat.findByIdAndUpdate(
+        chatId,
+        {
+            $push: {
+                participants: participantId,
+            },
+        },
+
+        {new: true}
+    )
+
+    const chat = await Chat.aggregate([
+        {
+            $match: {
+                _id: updatedChat._id,
+            },
+        },
+        ...chatCommonAggregation(),
+    ])
+
+    const payload = chat[0];
+
+    if(!payload) {
+        throw new ApiError(500, "Something went wrong");
+    }
+
+    emitSocketEvent(req, participantId, ChatEventEnum.NEW_CHAT_EVENT, payload);
+
+    return res
+    .status(200)
+    ,json(new ApiResponse(200, payload, "Participant added successfully"));
+});
+
+const removeParticipantsFromGroupChat = asyncHandler(async (req,res) => {
+
+    const { chatId, participantId } = req.params;
+
+    const groupChat = await Chat.findOne({
+        _id: new Mongoose.Types.ObjectId(chatId),
+        isGroupChat: true,
+    });
+
+    if(!groupChat) {
+        throw new ApiError(404, "Group chat not found");
+    }
+
+    if(groupChat?.admin?.toString() !== req.user._id.toString()) {
+        throw new ApiError(403, "You are not allowed to remove participants, You are not Admin");
+    }
+
+    const existingParticipants = groupChat.participants;
+
+    if(!existingParticipants.includes(participantId)) {
+        throw new ApiError(400, "Participant doesn't exists");
+    }
+
+    const updateChat = await Chat.findByIdAndUpdate(
+        chatId,
+        {
+            $pull: {
+                participants: participantId,
+            },
+        },
+
+        {new: true}
+    )
+
+    const chat = await Chat.aggregate([
+        {
+            $match: {
+                _id: updateChat._id,
+            },
+        },
+        ...chatCommonAggregation(),
+    ]);
+
+    const payload = chat[0];
+
+    if (!payload) {
+        throw new ApiError(500, "Internal server error");
+    }
+
+    emitSocketEvent(req, participantId, ChatEventEnum.LEAVE_CHAT_EVENT, payload);
+
+    return res
+    .status(200)
+    .json(new ApiResponse(200, payload, "Participant removed successfully"));
+});
+
+const getAllChats = asyncHandler(async (req,res) => {
+
+    const chats = await Chat.aggregate([
+
+        {
+            $match: {
+                participants: { $elemMatch: { $eq: req.user._id } },
+            },
+        },
+
+        {
+            $sort: {
+                updatedAt: -1,
+            },
+        },
+
+        ...chatCommonAggregation(),
+    ])
+
+});
 
 
 
@@ -508,8 +640,10 @@ export {
     createGroupChat,
     deleteGroupChat,
     deleteOneOnOneChat,
-    leaveGroupChat
-
-
+    leaveGroupChat,
+    addNewParticipants,
+    removeParticipantsFromGroupChat,
+    searchAvailableusers,
+    getAllChats,
 
 }
