@@ -22,3 +22,29 @@ export const removeFile = (localPath) => {
     })
 }
 
+export const removeUnusedMulterImageFilesOnError = (req) => {
+    try {
+        const multerFile = req.file;
+        const multerFiles = req.files;
+  
+      if (multerFile) {
+        
+        removeFile(multerFile.path);
+      }
+  
+      if (multerFiles) {
+        /** @type {Express.Multer.File[][]}  */
+        const filesValueArray = Object.values(multerFiles);
+        
+        filesValueArray.map((fileFields) => {
+          fileFields.map((fileObject) => {
+            removeLocalFile(fileObject.path);
+          });
+        });
+      }
+    } catch (error) {
+      
+      console.log("Error while removing image files: ", error);
+    }
+  };
+
